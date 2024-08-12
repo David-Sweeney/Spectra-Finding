@@ -40,6 +40,40 @@ def load_data(filepath, dark_filepath=None):
     data = np.clip(data, 1e-3, None)
     return data
 
+def check_data_orientation(data):
+    """
+    Identifies the orientation of the data, rotating it if it is
+    oriented so that the spectra are horizontal.
+    
+    Parameters
+    ----------
+    data : numpy array
+        3D array containing the datacube from the FITS file.
+
+    Returns
+    -------
+    numpy array
+        3D array containing the datacube with the spectra oriented
+        vertically
+    """
+    
+    # Summing over the spectra gives a spikier output than summing
+    # over the frames if the spectra are horizontal
+    x_axis = data[0].mean(axis=0)
+    x_axis = x_axis - np.percentile(x_axis, 1)
+    x_axis = x_axis / np.percentile(x_axis, 99)
+    
+    y_axis = data[0].mean(axis=1)
+    y_axis = y_axis - np.percentile(y_axis, 1)
+    y_axis = y_axis / np.percentile(y_axis, 99)
+    
+    # Check if the data is already oriented correctly
+    if x_axis.max() > y_axis.max():
+        return data
+    
+    # Otherwise, rotate the data
+    return np.transpose(data, (0, 2, 1))
+    
 def save_data(original_filepath, spectra, verbose=True):
     """
     Save the spectra to a .npy file with the same name as the 
@@ -196,6 +230,7 @@ if __name__ == '__main__':
         dark_filepath = None
     filepath = sys.argv[1]
     data = load_data(filepath, dark_filepath)
+    data = check_data_orientation(data)
     peaks, box_top, box_bottom = find_spectra(data[0])
     if dark_filepath is None:
         box_bottom = None
