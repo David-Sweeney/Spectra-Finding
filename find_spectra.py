@@ -4,7 +4,7 @@ import numpy as np
 from scipy.signal import find_peaks
 from astropy.io import fits
 
-def load_data(filepath):
+def load_data(filepath, dark_filepath=None):
     """
     Load data from a FITS file and crop the edges to remove 
     meta pixels.
@@ -13,6 +13,9 @@ def load_data(filepath):
     ----------
     filepath : str
         Filepath to the FITS file.
+    dark_filepath : str, optional
+        Filepath to the FITS file containing the dark. The 
+        default is None.
 
     Returns
     -------
@@ -22,10 +25,19 @@ def load_data(filepath):
 
     assert filepath.lower().endswith('.fits'), \
                 f'Must provide a FITS file, not {filepath}'
+    assert dark_filepath is None or dark_filepath.lower().endswith('.fits'), \
+                f'Must provide a FITS file, not {dark_filepath}'
+                
     with fits.open(filepath) as hdul:
         data = hdul[0].data[:, 3:-3, 3:-3]
-    
-    data = np.clip(data, 0., None)
+        
+    if dark_filepath is not None:
+        with fits.open(dark_filepath) as hdul:
+            dark = hdul[0].data[:, 3:-3, 3:-3]
+        
+        data = data - dark
+        
+    data = np.clip(data, 1e-3, None)
     return data
 
 def save_data(original_filepath, spectra, verbose=True):
@@ -53,8 +65,8 @@ def find_spectra(data):
     """
     Find the spectra in the data.
     
-    The 12 spectra are identified and the top of the box to be 
-    drawn around each of them. 
+    The 6, 11 or 12 spectra are identified and the top of the box 
+    to be drawn around each of them. 
 
     Parameters
     ----------
@@ -68,6 +80,10 @@ def find_spectra(data):
     int
         The y-coordinate of the top of the box to be drawn around
         the spectra.
+    int
+        The y-coordinate of the bottom of the box to be drawn around
+        the spectra. This is only reliable if the dark has been 
+        subtracted.
     """
 
     # Rescale data
@@ -79,12 +95,14 @@ def find_spectra(data):
     height = 0.1
     peaks = find_peaks(x_axis, height=height, distance=25)[0]
 
+    allowed_num_of_peaks = [12, 11, 7]
+
     # Retry peak finding until successful
-    if len(peaks) != 12:
+    if len(peaks) not in allowed_num_of_peaks:
         min_height = -0.05
-        max_height = 1.
-        while len(peaks) != 12:
-            if len(peaks) < 12:
+        max_height = 0.5
+        while len(peaks) not in allowed_num_of_peaks:
+            if len(peaks) < min(allowed_num_of_peaks):
                 max_height = height
             else:
                 min_height = height
@@ -92,11 +110,14 @@ def find_spectra(data):
             height = (min_height + max_height)/2
             print(f'Trying {height:.2f}')
             peaks = find_peaks(x_axis, height=height, distance=25)[0]
+            if max_height - min_height < 1e-3:
+                raise ValueError('Unable to find peaks.')
             
     # Check peaks are valid
-    peak_offsets = peaks[1:] - peaks[:-1]
-    assert peak_offsets.min() > 27, f'Bad peaks (too close): {peaks}'
-    assert peak_offsets.max() < 66, f'Bad peaks (too far): {peaks}'
+    if len(peaks) == 12:
+        peak_offsets = peaks[1:] - peaks[:-1]
+        assert peak_offsets.min() > 27, f'Bad peaks (too close): {peaks}'
+        assert peak_offsets.max() < 66, f'Bad peaks (too far): {peaks}'
 
     # Find box locations
     y_axis = np.mean(data, axis=1)
@@ -108,10 +129,24 @@ def find_spectra(data):
     y_axis = (cum_sum[2*half_window:] - cum_sum[:-2*half_window])/(2*half_window)
     
     baseline = np.median(y_axis[:10])
-    box_top = np.argmax(y_axis > 1.2*baseline) - 25
-    return peaks, box_top
 
-def extract_spectra(data, peaks, box_top):
+    # Find bottom of box
+    above = (y_axis > 1.2*baseline)
+    idxs = np.flatnonzero(above[:-1] != above[1:])
+    idxs = np.hstack(([0], idxs, [len(above)]))
+
+    sequence_lengths = idxs[1:]-idxs[:-1]
+    if above[0]:
+        sequence_lengths[1::2] *= -1
+    else:
+        sequence_lengths[::2] *= -1
+
+    assert np.max(sequence_lengths) > 50, f'Very small sequence found: {np.max(sequence_lengths)}'
+    longest_indx = np.argmax(sequence_lengths)+1
+    box_top, box_bottom = idxs[longest_indx-1:longest_indx+1]
+    return peaks, box_top, box_bottom
+
+def extract_spectra(data, peaks, box_top, box_bottom=None):
     """
     Extract the spectra from the data using the provided peaks
     and box top.
@@ -125,6 +160,10 @@ def extract_spectra(data, peaks, box_top):
     box_top : int
         The y-coordinate of the top of the box to be drawn around
         the spectra.
+    box_bottom : int, optional
+        The y-coordinate of the bottom of the box to be drawn around
+        the spectra. The default is None which means the box will
+        extend to the bottom of the frame.
 
     Returns
     -------
@@ -138,15 +177,27 @@ def extract_spectra(data, peaks, box_top):
     # Extract spectra
     spectra = []
     for peak in peaks:
-        spectrum = data[:, box_top:, peak-box_half_width:peak+box_half_width]
+        spectrum = data[:, box_top:box_bottom, peak-box_half_width:peak+box_half_width]
         spectra.append(spectrum.sum(axis=2))
 
     spectra = np.array(spectra)
     return np.transpose(spectra, (1, 0, 2))
     
 if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        print('Usage: python find_spectra.py <filepath>')
+        sys.exit(1)
+    elif len(sys.argv) > 3:
+        print('Too many arguments provided.')
+        sys.exit(1)
+    elif len(sys.argv) == 3:
+        dark_filepath = sys.argv[2]
+    else:
+        dark_filepath = None
     filepath = sys.argv[1]
-    data = load_data(filepath)
-    peaks, box_top = find_spectra(data[0])
-    spectra = extract_spectra(data, peaks, box_top)
+    data = load_data(filepath, dark_filepath)
+    peaks, box_top, box_bottom = find_spectra(data[0])
+    if dark_filepath is None:
+        box_bottom = None
+    spectra = extract_spectra(data, peaks, box_top, box_bottom)
     save_data(filepath, spectra)
