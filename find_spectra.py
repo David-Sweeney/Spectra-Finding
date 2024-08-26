@@ -72,7 +72,7 @@ def check_data_orientation(data):
         return data
     
     # Otherwise, rotate the data
-    return np.transpose(data, (0, 2, 1))
+    return np.flip(np.transpose(data, (0, 2, 1)), axis=(1, 2))
     
 def save_data(original_filepath, spectra, verbose=True):
     """
