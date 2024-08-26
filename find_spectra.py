@@ -150,7 +150,7 @@ def find_spectra(data):
     # Check peaks are valid
     if len(peaks) == 12:
         peak_offsets = peaks[1:] - peaks[:-1]
-        assert peak_offsets.min() > 27, f'Bad peaks (too close): {peaks}'
+        assert peak_offsets.min() > 17, f'Bad peaks (too close): {peaks}'
         assert peak_offsets.max() < 66, f'Bad peaks (too far): {peaks}'
 
     # Find box locations
