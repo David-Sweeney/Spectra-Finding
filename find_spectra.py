@@ -127,7 +127,7 @@ def find_spectra(data):
 
     # Find peaks
     height = 0.1
-    peaks = find_peaks(x_axis, height=height, distance=25)[0]
+    peaks = find_peaks(x_axis, height=height, distance=15)[0]
 
     allowed_num_of_peaks = [12, 11, 7]
 
@@ -145,7 +145,7 @@ def find_spectra(data):
             print(f'Trying {height:.2f}')
             peaks = find_peaks(x_axis, height=height, distance=25)[0]
             if max_height - min_height < 1e-3:
-                raise ValueError('Unable to find peaks.')
+                raise ValueError(f'Unable to find spectra. Found {len(peaks)} spectra.')
             
     # Check peaks are valid
     if len(peaks) == 12:
